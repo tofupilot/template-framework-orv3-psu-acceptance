@@ -1,0 +1,313 @@
+name: ORV3 PSU Acceptance Test
+version: 0.1.0
+description: Acceptance of an OCP Open Rack V3 HPR 12 kW PSU module. Hipot and ground bond before AC is applied, identity over Modbus, cold-start inrush at the 90 degree phase angle, efficiency at 230 and 277 Vac against the ORV3 floor and the Titanium points, ripple and the 70 to 130 percent load step, hold-up at 100 and 120 percent load with the AC_Loss_L lead, OVP OCP OTW and OTP trips in test mode, and a blackbox that must hold exactly what the test did before it is cleared.
+
+unit:
+  auto_identify: true
+  serial_number:
+    description: "Scan the data-matrix on the module's handle"
+    placeholder: "ORV3-12K-000000"
+    pattern: "^ORV3-12K-\\d{6}$"
+    default_value: "ORV3-12K-004217"
+  part_number:
+    default_value: "PSU-ORV3-12K-277"
+  batch_number:
+    default_value: "LOT-2026-38"
+
+plugs:
+  - name: PSU Bench
+    description: "AC source, 12 kW DC load, power analyzer, hipot tester, scope and the PSU's Modbus port (mock, one plug per bench)"
+    python: plugs.psu_bench:PsuBench
+    key: bench
+    config:
+      serial_number: "ORV3-12K-004217"
+
+setup:
+  - name: Hipot and Ground Bond
+    key: hipot_and_bond
+    python: phases.hipot_and_bond
+    measurements:
+      - name: Hipot Leakage
+        key: hipot_leakage_ma
+        unit: mA
+        description: "2121 Vdc primary to chassis for 1 s (IEC 62368-1 routine test, 1500 Vac equivalent). Y-capacitors pass nothing at DC; a healthy module leaks tens of microamps."
+        validators:
+          - {operator: "<=", expected_value: 1.0}
+      - name: Ground Bond
+        key: ground_bond_mohm
+        unit: mΩ
+        description: "Inlet earth pin to chassis at 40 A for 2 s."
+        validators:
+          - {operator: "<=", expected_value: 100.0}
+
+  - name: Identify
+    key: identify
+    python: phases.identify
+    depends_on: [hipot_and_bond]
+    measurements:
+      - name: PSU Identity
+        key: psu_identity
+        description: Model, firmware and management protocol as one object against the release.
+        validators:
+          - operator: "=="
+            expected_value:
+              model: PSU-ORV3-12K-277
+              fw: 2.4.1
+              protocol: modbus-rtu
+      - name: Reported Serial
+        key: reported_serial
+        validators:
+          - {operator: matches, expected_value: "^ORV3-12K-\\d{6}$"}
+      - name: Serial Matches Label
+        key: serial_matches_label
+        description: The serial the module reports over Modbus is the one on its label.
+        validators:
+          - {operator: "==", expected_value: true}
+      - name: Output At No Load
+        key: vout_no_load_v
+        unit: V
+        validators:
+          - {operator: ">=", expected_value: 50.0}
+          - {operator: "<=", expected_value: 51.0}
+
+main:
+  - name: Inrush
+    key: inrush
+    python: phases.inrush
+    measurements:
+      - name: Inrush Current
+        key: inrush
+        title: Cold-start inrush at 277 Vac, closed at 90 degrees
+        x_axis:
+          legend: Time
+          unit: ms
+        y_axis:
+          - legend: Input current
+            key: current
+            unit: A
+            aggregations:
+              - type: peak_a
+                unit: A
+                validators:
+                  - {operator: "<=", expected_value: 85.0}
+              - type: first_cycle_rms_a
+                unit: A
+                validators:
+                  - {operator: "<=", expected_value: 60.0}
+
+  - name: Efficiency
+    key: efficiency
+    python: phases.efficiency
+    depends_on: [inrush]
+    timeout: 45m
+    measurements:
+      - name: Efficiency
+        key: efficiency
+        title: Efficiency and output-current telemetry across the load range
+        x_axis:
+          legend: Load
+          unit: "%"
+        y_axis:
+          - legend: Efficiency at 277 Vac
+            key: eff_277
+            unit: "%"
+            aggregations:
+              - type: min_30_100_pct
+                unit: "%"
+                validators:
+                  - {operator: ">=", expected_value: 96.5}
+              - type: min_10_30_pct
+                unit: "%"
+                validators:
+                  - {operator: ">=", expected_value: 94.0}
+              - type: peak_pct
+                unit: "%"
+                validators:
+                  - {operator: ">=", expected_value: 97.5}
+          - legend: Efficiency at 230 Vac
+            key: eff_230
+            unit: "%"
+            aggregations:
+              - type: min_30_100_pct
+                unit: "%"
+                validators:
+                  - {operator: ">=", expected_value: 96.5}
+              - type: min_10_30_pct
+                unit: "%"
+                validators:
+                  - {operator: ">=", expected_value: 94.0}
+              - type: peak_pct
+                unit: "%"
+                validators:
+                  - {operator: ">=", expected_value: 97.5}
+          - legend: Iout telemetry error at 277 Vac
+            key: iout_telemetry_err_pct
+            unit: "%"
+            aggregations:
+              - type: max_abs_pct
+                unit: "%"
+                validators:
+                  - {operator: "<=", expected_value: 2.0}
+
+  - name: Ripple and Load Step
+    key: ripple_and_transient
+    python: phases.ripple_and_transient
+    depends_on: [efficiency]
+    measurements:
+      - name: Output Ripple
+        key: ripple_mvpp
+        unit: mVpp
+        description: "Full load, 20 MHz bandwidth, 0.1 uF at the probe tip (spec 4.14)."
+        validators:
+          - {operator: "<=", expected_value: 500.0}
+      - name: Load Step
+        key: load_step
+        title: Output deviation on the 70 to 130 percent load step at 3 A/us
+        x_axis:
+          legend: Time
+          unit: ms
+        y_axis:
+          - legend: Step up
+            key: step_up
+            unit: V
+            aggregations:
+              - type: min_v
+                unit: V
+                validators:
+                  - {operator: ">=", expected_value: -1.5}
+              - type: settle_ms
+                unit: ms
+                validators:
+                  - {operator: "<=", expected_value: 3.0}
+          - legend: Step down
+            key: step_down
+            unit: V
+            aggregations:
+              - type: max_v
+                unit: V
+                validators:
+                  - {operator: "<=", expected_value: 1.5}
+              - type: settle_ms
+                unit: ms
+                validators:
+                  - {operator: "<=", expected_value: 3.0}
+
+  - name: Hold-Up
+    key: hold_up
+    python: phases.hold_up
+    depends_on: [ripple_and_transient]
+    measurements:
+      - name: Hold-Up
+        key: hold_up
+        title: Output voltage after AC loss at 100 and 120 percent load
+        x_axis:
+          legend: Time after AC loss
+          unit: ms
+        y_axis:
+          - legend: Output at 100 % load
+            key: vout_100
+            unit: V
+            aggregations:
+              - type: hold_up_ms
+                unit: ms
+                validators:
+                  - {operator: ">=", expected_value: 20.0}
+          - legend: Output at 120 % load
+            key: vout_120
+            unit: V
+            aggregations:
+              - type: hold_up_ms
+                unit: ms
+                validators:
+                  - {operator: ">=", expected_value: 16.67}
+      - name: AC Loss Warning Margin
+        key: ac_loss_warning_margin_ms
+        unit: ms
+        description: "Time from AC_Loss_L asserting to the output leaving regulation, worst of the two loads. The rack needs 5 ms to shed load."
+        validators:
+          - {operator: ">=", expected_value: 5.0}
+
+  - name: Protections
+    key: protections
+    python: phases.protections
+    depends_on: [hold_up]
+    measurements:
+      - name: OVP Trip
+        key: ovp_trip_v
+        unit: V
+        description: "Set-point raised in 0.1 V steps in test mode until the output latches off. Spec 4.22: trip above 52.5 V, the fast comparator at 54 V."
+        validators:
+          - {operator: ">=", expected_value: 52.5}
+          - {operator: "<=", expected_value: 54.0}
+      - name: OVP Response
+        key: ovp_response_ms
+        unit: ms
+        validators:
+          - {operator: "<=", expected_value: 200.0}
+      - name: Constant-Current Limit
+        key: cc_limit_a
+        unit: A
+        description: "Load ramped in 2 A steps until the output leaves regulation. 120 % of 237.6 A rated, +-5 % of this line's derivation."
+        validators:
+          - {operator: ">=", expected_value: 273.0}
+          - {operator: "<=", expected_value: 297.0}
+      - name: OCP Restart Delay
+        key: ocp_restart_s
+        unit: s
+        description: "Time out of regulation before the module shuts down and restarts, 10 s in the spec, +-1 s here."
+        validators:
+          - {operator: ">=", expected_value: 9.0}
+          - {operator: "<=", expected_value: 11.0}
+      - name: OTW Trip
+        key: otw_trip_c
+        unit: °C
+        validators:
+          - {operator: ">=", expected_value: 83.0}
+          - {operator: "<=", expected_value: 87.0}
+      - name: OTP Trip
+        key: otp_trip_c
+        unit: °C
+        validators:
+          - {operator: ">=", expected_value: 93.0}
+          - {operator: "<=", expected_value: 97.0}
+      - name: OTP Minus OTW
+        key: otp_minus_otw_c
+        unit: °C
+        description: "The warning must lead the shutdown by at least 4 C (M-CRPS 8.1.9), or the rack learns of the problem by losing the module."
+        validators:
+          - {operator: ">=", expected_value: 4.0}
+      - name: Recovered After Trips
+        key: recovered_after_trips
+        description: Output back in regulation after the last fault is cleared.
+        validators:
+          - {operator: "==", expected_value: true}
+
+teardown:
+  - name: Blackbox and Park
+    key: blackbox_and_park
+    python: phases.blackbox_and_park
+    measurements:
+      - name: Blackbox After Test
+        key: blackbox_after_test
+        description: "Exactly the events this test caused: two AC losses, one of each trip, no fan fault. Anything else happened on its own."
+        validators:
+          - operator: "=="
+            expected_value:
+              ac_loss: 2
+              ovp: 1
+              ocp: 1
+              otw: 1
+              otp: 1
+              fan: 0
+      - name: Blackbox After Clear
+        key: blackbox_after_clear
+        description: Ships empty, so the first entry the customer reads happened in their rack.
+        validators:
+          - operator: "=="
+            expected_value:
+              ac_loss: 0
+              ovp: 0
+              ocp: 0
+              otw: 0
+              otp: 0
+              fan: 0
