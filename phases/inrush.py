@@ -6,7 +6,7 @@ from utils.recipe import AC_INPUTS_V, MAINS_HZ
 def inrush(measurements, bench, log):
     """Cold start at 277 Vac closed at the 90 degree phase angle, the worst
     case for the bulk capacitors, on the inrush CT. Peak and the RMS of the
-    first mains cycle, both from the spec's Table."""
+    first mains cycle, both limits from section 4.7 of the spec."""
     bench.ac_off()
     bench.set_load_a(0.0)
     t_ms, i_a = bench.inrush_capture(90.0)
