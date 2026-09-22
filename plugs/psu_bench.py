@@ -132,7 +132,7 @@ class PsuBench:
         t = np.arange(n) / 100.0  # ms, 10 us per sample
         sign = -1.0 if to_pct > from_pct else 1.0
         amp = 0.82 if to_pct > from_pct else 0.74
-        dev = sign * amp * np.exp(-t / 0.55) * np.cos(2 * math.pi * 2.5 * t)
+        dev = sign * amp * np.exp(-t / 1.5) * np.cos(2 * math.pi * 2.5 * t)
         dev += self._rng.normal(0.0, 0.008, n)
         return t.round(2).tolist(), dev.round(4).tolist()
 
